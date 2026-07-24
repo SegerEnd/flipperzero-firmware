@@ -13,6 +13,27 @@
 #define ble_gatt_strict_crash(message)
 #endif
 
+static tBleStatus ble_gatt_characteristic_value_update(
+    uint16_t svc_handle,
+    uint16_t char_handle,
+    const uint8_t* data,
+    uint16_t length) {
+    if(length <= UINT8_MAX) {
+        return aci_gatt_update_char_value(svc_handle, char_handle, 0, length, data);
+    }
+    tBleStatus status = BLE_STATUS_SUCCESS;
+    for(uint16_t offset = 0; offset < length && !status;) {
+        uint16_t chunk = MIN(240, length - offset);
+        // Notify subscribers once, with the complete value in place
+        uint8_t update_type = (offset + chunk == length) ? GATT_CHAR_UPDATE_SEND_NOTIFICATION :
+                                                           GATT_CHAR_UPDATE_LOCAL_ONLY;
+        status = aci_gatt_update_char_value_ext(
+            0, svc_handle, char_handle, update_type, length, offset, chunk, data + offset);
+        offset += chunk;
+    }
+    return status;
+}
+
 void ble_gatt_characteristic_init(
     uint16_t svc_handle,
     const BleGattCharacteristicParams* char_descriptor,
@@ -124,8 +145,8 @@ bool ble_gatt_characteristic_update(
     size_t retries_left = 1000;
     do {
         retries_left--;
-        result = aci_gatt_update_char_value(
-            svc_handle, char_instance->handle, 0, char_data_size, char_data);
+        result = ble_gatt_characteristic_value_update(
+            svc_handle, char_instance->handle, char_data, char_data_size);
         if(result == BLE_STATUS_INSUFFICIENT_RESOURCES) {
             FURI_LOG_W(TAG, "Insufficient resources for %s characteristic", char_descriptor->name);
             furi_delay_ms(1);
